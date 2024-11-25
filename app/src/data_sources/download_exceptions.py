@@ -1,8 +1,11 @@
 """
 Classes for custom exceptions that may be thrown whilst downloading documents.
 """
+
 import settings
 from typing import Tuple, Union
+
+from regex import Regex
 
 
 class InvalidContentType(Exception):
@@ -37,7 +40,8 @@ class OleCheckFailed(Exception):
 
     def __repr__(self):
         return "OleCheckFailed({})".format(self.error)
-    
+
+
 class HTTPError(Exception):
     def __init__(self, status_code=None):
         """
@@ -47,16 +51,16 @@ class HTTPError(Exception):
 
     def __repr__(self):
         return "HTTPError={}".format(self.status_code)
-    
+
+
 """
 Functions to check validity of downloads and requests
 """
 
+
 def valid_content_type(
-        content_type: str
-) -> Tuple[
-    Union[str, None], Union[InvalidContentType, None]
-]:
+    content_type: str, valid_content_regex_pattern: Regex
+) -> Tuple[Union[str, None], Union[InvalidContentType, None]]:
     """check if content type is valid; this functions returns True if either
     the content type is unknown or if the content type is known and is found to
     be valid.
@@ -69,19 +73,17 @@ def valid_content_type(
         return content_type, None
 
     # sanitize content type string
-    content_type = content_type.lower().replace('-', '')
+    content_type = content_type.lower().replace("-", "")
 
-    if settings.download.VALID_CT_REGEX.match(content_type) is None:
+    if valid_content_regex_pattern.match(content_type) is None:
         return content_type, InvalidContentType(content_type=content_type)
 
     return content_type, None
 
 
 def valid_content_length(
-        content_length: Union[str, None]
-) -> Tuple[
-    Union[int, None], Union[FileSizeExceeded, None]
-]:
+    content_length: Union[str, None]
+) -> Tuple[Union[int, None], Union[FileSizeExceeded, None]]:
     """check if content length is valid; this functions returns True if either
     the file size is known and below the maximally allowed file size, or if the
     file size is unknown.

@@ -1,7 +1,7 @@
 import regex
 
 # constants
-MAX_FILESIZE = 90 * 1024 * 1024  # 90 MB
+MAX_FILESIZE = 250 * 1024 * 1024  # 250 MB
 
 # string patterns
 DOC_FN_PATTERN = "doc_{url_hash}{ext}"
@@ -10,8 +10,18 @@ META_DATA_FN_PATTERN = "meta_{part_id}.parquet"
 LOG_FN_PATTERN = "info_{part_id}.log"
 LOG_FORMAT = "[%(asctime)s]::%(name)s::%(levelname)s::%(message)s"
 
-VALID_CT_REGEX = pattern = regex.compile(
+VALID_DOCX_CT_REGEX = regex.compile(
     r'(application|text)/.*(openxml|word|doc|msword|msdownload|rtf).*',
+    flags=regex.IGNORECASE | regex.DOTALL
+)
+
+VALID_PPTX_CT_REGEX = regex.compile(
+    r'(application|text)/.*(openxml|powerpoint|ppt|presentation|msdownload).*',
+    flags=regex.IGNORECASE | regex.DOTALL
+)
+
+VALID_PDF_CT_REGEX = regex.compile(
+    r'application/.*(pdf|x-pdf|acrobat|vnd\.pdf).*',
     flags=regex.IGNORECASE | regex.DOTALL
 )
 

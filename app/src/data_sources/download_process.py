@@ -7,14 +7,14 @@ import uuid
 import time
 from pathlib import Path
 import requests
+from regex import Regex
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from joblib import Parallel, delayed
 import threading
 import settings
 from src.data_sources.maldoc_check import MalDocCheck
-from src.data_sources.http_handlers import run_sess, header_handler, \
-    body_handler
+from src.data_sources.http_handlers import run_sess, header_handler, body_handler
 from src.data_sources.download_exceptions import FileSizeExceeded
 import hashlib
 from orm.models import SourcesRecordDB
@@ -23,9 +23,18 @@ from typing import List, Tuple, Union
 
 
 class DownloadProcess(mp.Process):
-    def __init__(self, input_queue: mp.Queue, cc_dump_id: str, dl_timeout: int,
-                 dl_retries: int, dl_redirects: int, dl_backoff: int,
-                 num_threads: int, write_dir: str):
+    def __init__(
+        self,
+        input_queue: mp.Queue,
+        cc_dump_id: str,
+        dl_timeout: int,
+        dl_retries: int,
+        dl_redirects: int,
+        dl_backoff: int,
+        num_threads: int,
+        write_dir: str,
+        document_extension: Regex,
+    ):
         """
         Launch one process which receives URL batches in a queue, then
         downloads them while writing downloaded files to tars and metadata to
@@ -56,6 +65,21 @@ class DownloadProcess(mp.Process):
         self.dl_redirects = dl_redirects
         self.dl_backoff = dl_backoff
         self.write_dir = write_dir
+        self.document_extension = document_extension
+        if document_extension == "docx":
+            self.valid_content_type_regex_pattern = (
+                settings.download.VALID_DOCX_CONTENT_TYPE
+            )
+        elif document_extension == "pptx":
+            self.valid_content_type_regex_pattern = (
+                settings.download.VALID_PPTX_CONTENT_TYPE
+            )
+        elif document_extension == "pdf":
+            self.valid_content_type_regex_pattern = (
+                settings.download.VALID_PDF_CONTENT_TYPE
+            )
+        else:
+            raise ValueError("Invalid document extension")
 
         # create directory structure
         # ! all files are written to this directory
@@ -86,14 +110,19 @@ class DownloadProcess(mp.Process):
             if inputs is None:
                 self.flush()
                 self.logger_writable.info(
-                    "Regularly terminated worker; queue is empty.")
+                    "Regularly terminated worker; queue is empty."
+                )
                 break
 
             try:
                 self.batch_handler(inputs)
             except Exception as e:
-                self.logger_writable.error("Batch handler error! " + str(
-                    e) + " Missed Batch items " + str(inputs))
+                self.logger_writable.error(
+                    "Batch handler error! "
+                    + str(e)
+                    + " Missed Batch items "
+                    + str(inputs)
+                )
 
     # create a new tar file and parquet file once we reach a new shard
     def get_writable_files(self):
@@ -107,7 +136,8 @@ class DownloadProcess(mp.Process):
         self.shard_id = self.worker_id + "_" + str(uuid.uuid4())
         self.TAR_FILE = f"{self.shard_id}.tar.gz"
         self.tar_writable = tarfile.TarFile.open(
-            os.path.join(self.WORK_DIR, self.TAR_FILE), mode='w:gz')
+            os.path.join(self.WORK_DIR, self.TAR_FILE), mode="w:gz"
+        )
 
         # again, hacky but easy
         cols = [c.key for c in SourcesRecordDB.__table__.columns]
@@ -120,7 +150,8 @@ class DownloadProcess(mp.Process):
         self.parquet_writable = os.path.join(self.WORK_DIR, self.PARQUET_FILE)
 
         self.logger_writable.info(
-            "Created .tar.gz and .parquet for shard id " + str(self.shard_id))
+            "Created .tar.gz and .parquet for shard id " + str(self.shard_id)
+        )
 
     def flush(self):
         """
@@ -128,16 +159,14 @@ class DownloadProcess(mp.Process):
         """
         # reset file size count
         self.current_shard_size = 0
-        if hasattr(self, 'tar_writable'):
+        if hasattr(self, "tar_writable"):
             self.tar_writable.close()
 
         # dump current db dataframe to parquet
-        if hasattr(self, 'df'):
+        if hasattr(self, "df"):
             self.df.to_parquet(self.parquet_writable)
 
-    def get_logger(
-            self, file_path: str, level=logging.INFO
-    ) -> logging.Logger:
+    def get_logger(self, file_path: str, level=logging.INFO) -> logging.Logger:
         """get worker logger
         @param file_path: path for log file
         @param level: log level
@@ -152,7 +181,7 @@ class DownloadProcess(mp.Process):
         # logger.addHandler(stream_handler)
 
         log_file_info = file_path
-        file_handler_info = logging.FileHandler(log_file_info, mode='w')
+        file_handler_info = logging.FileHandler(log_file_info, mode="w")
         file_handler_info.setFormatter(log_formatter)
         file_handler_info.setLevel(logging.INFO)
         logger.addHandler(file_handler_info)
@@ -175,7 +204,7 @@ class DownloadProcess(mp.Process):
 
         # create new tar file if size exceeded
         # ! shard size that triggers flush controlled here
-        if self.current_shard_size > 10 ** 8:
+        if self.current_shard_size > 10**8:
             self.get_writable_files()
 
     def batch_handler(self, batch: List[Tuple[str, str]]):
@@ -196,14 +225,14 @@ class DownloadProcess(mp.Process):
         adapter = HTTPAdapter(
             max_retries=retries,
             pool_connections=self.num_threads,
-            pool_maxsize=int(self.num_threads * 1.1)
+            pool_maxsize=int(self.num_threads * 1.1),
         )
 
         with requests.Session() as sess:
-            sess.mount('http://', adapter)
-            sess.mount('https://', adapter)
+            sess.mount("http://", adapter)
+            sess.mount("https://", adapter)
 
-            _ = Parallel(n_jobs=self.num_threads, backend='threading')(
+            _ = Parallel(n_jobs=self.num_threads, backend="threading")(
                 delayed(self.download_doc)(batch_item[0], batch_item[1], sess)
                 for batch_item in batch
             )
@@ -218,9 +247,10 @@ class DownloadProcess(mp.Process):
         @param record: Record to write, matching the ORM model.
         """
         # ! hacky but easy
-        keep_recs = {c.key: (
-            [record.__dict__[c.key]] if c.key in record.__dict__ else [None])
-            for c in SourcesRecordDB.__table__.columns}
+        keep_recs = {
+            c.key: ([record.__dict__[c.key]] if c.key in record.__dict__ else [None])
+            for c in SourcesRecordDB.__table__.columns
+        }
         temp_df = pd.DataFrame(keep_recs).astype(str)
         with self.pdLock:
             self.df = pd.concat([self.df, temp_df])
@@ -254,20 +284,24 @@ class DownloadProcess(mp.Process):
 
         try:
             self.logger_writable.info(
-                "downloading doc " + str(url) + " in shard " + str(
-                    self.shard_id))
+                "downloading doc " + str(url) + " in shard " + str(self.shard_id)
+            )
 
             # <----------------- request header ----------------->
             # http session head check
             response, exception, timestamp = run_sess(
-                sess_method=sess.head, timeout=self.dl_timeout,
+                sess_method=sess.head,
+                timeout=self.dl_timeout,
                 allow_redirects=True,
-                url=url
+                url=url,
             )
 
             # handle header (creates or catches all fatal exceptions)
-            response, header_metadata, exception = header_handler(response,
-                                                                  exception)
+            response, header_metadata, exception = header_handler(
+                response,
+                exception,
+                valid_content_type_regex_pattern=self.valid_content_type_regex_pattern,
+            )
 
             # ! handle DB data
             record.timestamp = timestamp
@@ -275,27 +309,28 @@ class DownloadProcess(mp.Process):
             record.exception = repr(exception)
 
             for k, v in header_metadata.items():
-                setattr(record, str(k).replace('-', '_'), v)
+                setattr(record, str(k).replace("-", "_"), v)
 
             # check exceptions
             if exception is not None:
                 self.safe_close(response)
                 self.logger_writable.error(
-                    "HTTP HEAD request exception: " + repr(exception))
+                    "HTTP HEAD request exception: " + repr(exception)
+                )
                 self.record_to_df(record)
                 return 0
 
             # <----------------- run get request ----------------->
             # get doc
             response, exception, timestamp = run_sess(
-                sess_method=sess.get, timeout=self.dl_timeout,
+                sess_method=sess.get,
+                timeout=self.dl_timeout,
                 allow_redirects=True,
-                url=url
+                url=url,
             )
 
             # handle body
-            response, body_metadata, exception = body_handler(response,
-                                                              exception)
+            response, body_metadata, exception = body_handler(response, exception)
 
             # ! handle DB data
             record.timestamp = timestamp
@@ -312,54 +347,54 @@ class DownloadProcess(mp.Process):
                 return 0
 
             # maldoc checks
-            if response.content is not None and record.exception == 'None':
-                maldoc = MalDocCheck(data=response.content)
-                try:
-                    indicators = maldoc.run()
-                except Exception as e:
-                    self.safe_close(response)
-                    self.logger_writable.error(
-                        "maldoc.run() failed with error: " + str(e))
-                    self.record_to_df(record)
-                    return 0
+            if self.document_extension != "pdf":
+                if response.content is not None and record.exception == "None":
+                    maldoc = MalDocCheck(data=response.content)
+                    try:
+                        indicators = maldoc.run()
+                    except Exception as e:
+                        self.safe_close(response)
+                        self.logger_writable.error(
+                            "maldoc.run() failed with error: " + str(e)
+                        )
+                        self.record_to_df(record)
+                        return 0
 
-                olet_pass, reason = maldoc.validate_indicators(indicators)
+                    olet_pass, reason = maldoc.validate_indicators(indicators)
 
-                # ! handle DB data
-                record.olet_pass = olet_pass
-                for ind in indicators:
-                    if (
-                            ind.name in settings.download.OLET_DB_MAPPING
-                            and
-                            ind.value
-                    ):
-                        setattr(record,
+                    # ! handle DB data
+                    record.olet_pass = olet_pass
+                    for ind in indicators:
+                        if ind.name in settings.download.OLET_DB_MAPPING and ind.value:
+                            setattr(
+                                record,
                                 settings.download.OLET_DB_MAPPING[ind.name],
-                                ind.value)
+                                ind.value,
+                            )
 
-                if not olet_pass:
-                    self.safe_close(response)
-                    self.logger_writable.error(
-                        "maldoc not passed, reason: " + str(reason))
-                    self.record_to_df(record)
-                    return 0
+                    if not olet_pass:
+                        self.safe_close(response)
+                        self.logger_writable.error(
+                            "maldoc not passed, reason: " + str(reason)
+                        )
+                        self.record_to_df(record)
+                        return 0
 
             # ! extra filesize check (cannot rely on header information alone)
             content_len = len(response.content)
             if content_len > settings.download.MAX_FILESIZE:
                 self.safe_close(response)
-                self.logger_writable.error(
-                    "max filesize exceeded, " + str(content_len)
-                )
+                self.logger_writable.error("max filesize exceeded, " + str(content_len))
                 record.exception = repr(FileSizeExceeded(filesize=content_len))
                 self.record_to_df(record)
                 return 0
 
             # write content to current tar file
-            if response.content is not None and record.exception == 'None':
+            if response.content is not None and record.exception == "None":
                 doc_ext = os.path.splitext(record.url)[1]
                 doc_fn = settings.download.DOC_FN_PATTERN.format(
-                    url_hash=record.url_hash, ext=doc_ext)
+                    url_hash=record.url_hash, ext=doc_ext
+                )
                 record.filename = doc_fn
                 setattr(record, "filename", doc_fn)
 
