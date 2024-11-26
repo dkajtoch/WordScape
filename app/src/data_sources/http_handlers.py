@@ -2,7 +2,6 @@ import time
 import settings
 from typing import Tuple, Union
 import requests
-from regex import Regex
 from src.data_sources.download_exceptions import (
     FileSizeExceeded,
     HTTPError,
@@ -43,7 +42,7 @@ def run_sess(
 def header_handler(
     response: requests.Response,
     exception: Exception,
-    valid_content_type_regex_pattern: Regex,
+    valid_content_type_regex_pattern,
 ) -> Tuple[
     Union[requests.Response, None],
     dict,

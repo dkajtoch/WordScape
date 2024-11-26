@@ -5,8 +5,6 @@ Classes for custom exceptions that may be thrown whilst downloading documents.
 import settings
 from typing import Tuple, Union
 
-from regex import Regex
-
 
 class InvalidContentType(Exception):
     def __init__(self, content_type):
@@ -59,7 +57,7 @@ Functions to check validity of downloads and requests
 
 
 def valid_content_type(
-    content_type: str, valid_content_regex_pattern: Regex
+    content_type: str, valid_content_regex_pattern
 ) -> Tuple[Union[str, None], Union[InvalidContentType, None]]:
     """check if content type is valid; this functions returns True if either
     the content type is unknown or if the content type is known and is found to

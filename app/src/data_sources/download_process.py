@@ -7,7 +7,6 @@ import uuid
 import time
 from pathlib import Path
 import requests
-from regex import Regex
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from joblib import Parallel, delayed
@@ -33,7 +32,7 @@ class DownloadProcess(mp.Process):
         dl_backoff: int,
         num_threads: int,
         write_dir: str,
-        document_extension: Regex,
+        document_extension: str,
     ):
         """
         Launch one process which receives URL batches in a queue, then
@@ -68,15 +67,15 @@ class DownloadProcess(mp.Process):
         self.document_extension = document_extension
         if document_extension == "docx":
             self.valid_content_type_regex_pattern = (
-                settings.download.VALID_DOCX_CONTENT_TYPE
+                settings.download.VALID_DOCX_CT_REGEX
             )
         elif document_extension == "pptx":
             self.valid_content_type_regex_pattern = (
-                settings.download.VALID_PPTX_CONTENT_TYPE
+                settings.download.VALID_PPTX_CT_REGEX
             )
         elif document_extension == "pdf":
             self.valid_content_type_regex_pattern = (
-                settings.download.VALID_PDF_CONTENT_TYPE
+                settings.download.VALID_PDF_CT_REGEX
             )
         else:
             raise ValueError("Invalid document extension")
